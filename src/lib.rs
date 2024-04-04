@@ -33,7 +33,6 @@ pub type MapEntry<'a, K, V> = indexmap::map::Entry<'a, K, V>;
 /// A JSON Schema.
 #[allow(clippy::large_enum_variant)]
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(untagged)]
 pub enum Schema {
     /// A trivial boolean JSON Schema.
@@ -45,68 +44,8 @@ pub enum Schema {
     Object(SchemaObject),
 }
 
-impl Schema {
-    /// Creates a new `$ref` schema.
-    ///
-    /// The given reference string should be a URI reference. This will usually be a JSON Pointer
-    /// in [URI Fragment representation](https://tools.ietf.org/html/rfc6901#section-6).
-    pub fn new_ref(reference: String) -> Self {
-        SchemaObject::new_ref(reference).into()
-    }
-
-    /// Returns `true` if `self` is a `$ref` schema.
-    ///
-    /// If `self` is a [`SchemaObject`] with `Some` [`reference`](struct.SchemaObject.html#structfield.reference) set, this returns `true`.
-    /// Otherwise, returns `false`.
-    pub fn is_ref(&self) -> bool {
-        match self {
-            Schema::Object(o) => o.is_ref(),
-            _ => false,
-        }
-    }
-
-    /// Converts the given schema (if it is a boolean schema) into an equivalent schema object.
-    ///
-    /// If the given schema is already a schema object, this has no effect.
-    ///
-    /// # Example
-    /// ```
-    /// use schemars::schema::{Schema, SchemaObject};
-    ///
-    /// let bool_schema = Schema::Bool(true);
-    ///
-    /// assert_eq!(bool_schema.into_object(), SchemaObject::default());
-    /// ```
-    pub fn into_object(self) -> SchemaObject {
-        match self {
-            Schema::Object(o) => o,
-            Schema::Bool(true) => SchemaObject::default(),
-            Schema::Bool(false) => SchemaObject {
-                subschemas: Some(Box::new(SubschemaValidation {
-                    not: Some(Schema::Object(Default::default()).into()),
-                    ..Default::default()
-                })),
-                ..Default::default()
-            },
-        }
-    }
-}
-
-impl From<SchemaObject> for Schema {
-    fn from(o: SchemaObject) -> Self {
-        Schema::Object(o)
-    }
-}
-
-impl From<bool> for Schema {
-    fn from(b: bool) -> Self {
-        Schema::Bool(b)
-    }
-}
-
 /// The root object of a JSON Schema document.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase", default)]
 pub struct RootSchema {
     /// The `$schema` keyword.
@@ -130,7 +69,6 @@ pub struct RootSchema {
 
 /// A JSON Schema object.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase", default)]
 pub struct SchemaObject {
     /// Properties which annotate the [`SchemaObject`] which typically have no effect when an object is being validated against the schema.
@@ -181,6 +119,11 @@ pub struct SchemaObject {
     /// See [JSON Schema 8.2.4.1. Direct References with "$ref"](https://tools.ietf.org/html/draft-handrews-json-schema-02#section-8.2.4.1).
     #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
     pub reference: Option<String>,
+    /// The old way of denoting required fields
+    ///
+    /// See [JSON Schema (03) 5.7. required](https://datatracker.ietf.org/doc/html/draft-zyp-json-schema-03#anchor12)
+    /// Arbitrary extra properties which are not part of the JSON Schema specification, or which `schemars` does not support.
+    pub required: Option<bool>,
     #[serde(flatten)]
     pub extensions: Map<String, Value>,
 }
@@ -207,76 +150,8 @@ where
     }
 }
 
-macro_rules! get_or_insert_default_fn {
-    ($name:ident, $ret:ty) => {
-        get_or_insert_default_fn!(
-            concat!(
-                "Returns a mutable reference to this schema's [`",
-                stringify!($ret),
-                "`](#structfield.",
-                stringify!($name),
-                "), creating it if it was `None`."
-            ),
-            $name,
-            $ret
-        );
-    };
-    ($doc:expr, $name:ident, $ret:ty) => {
-        #[doc = $doc]
-        pub fn $name(&mut self) -> &mut $ret {
-            self.$name.get_or_insert_with(Default::default)
-        }
-    };
-}
-
-impl SchemaObject {
-    /// Creates a new `$ref` schema.
-    ///
-    /// The given reference string should be a URI reference. This will usually be a JSON Pointer
-    /// in [URI Fragment representation](https://tools.ietf.org/html/rfc6901#section-6).
-    pub fn new_ref(reference: String) -> Self {
-        SchemaObject {
-            reference: Some(reference),
-            ..Default::default()
-        }
-    }
-
-    /// Returns `true` if `self` is a `$ref` schema.
-    ///
-    /// If `self` has `Some` [`reference`](struct.SchemaObject.html#structfield.reference) set, this returns `true`.
-    /// Otherwise, returns `false`.
-    pub fn is_ref(&self) -> bool {
-        self.reference.is_some()
-    }
-
-    /// Returns `true` if `self` accepts values of the given type, according to the [`instance_type`](struct.SchemaObject.html#structfield.instance_type) field.
-    ///
-    /// This is a basic check that always returns `true` if no `instance_type` is specified on the schema,
-    /// and does not check any subschemas. Because of this, both `{}` and  `{"not": {}}` accept any type according
-    /// to this method.
-    pub fn has_type(&self, ty: InstanceType) -> bool {
-        self.instance_type
-            .as_ref()
-            .map_or(true, |x| x.contains(&ty))
-    }
-
-    get_or_insert_default_fn!(metadata, Metadata);
-    get_or_insert_default_fn!(subschemas, SubschemaValidation);
-    get_or_insert_default_fn!(number, NumberValidation);
-    get_or_insert_default_fn!(string, StringValidation);
-    get_or_insert_default_fn!(array, ArrayValidation);
-    get_or_insert_default_fn!(object, ObjectValidation);
-}
-
-impl From<Schema> for SchemaObject {
-    fn from(schema: Schema) -> Self {
-        schema.into_object()
-    }
-}
-
 /// Properties which annotate a [`SchemaObject`] which typically have no effect when an object is being validated against the schema.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase", default)]
 pub struct Metadata {
     /// The `$id` keyword.
@@ -331,7 +206,6 @@ fn is_false(b: &bool) -> bool {
 
 /// Properties of a [`SchemaObject`] which define validation assertions in terms of other schemas.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase", default)]
 pub struct SubschemaValidation {
     /// The `allOf` keyword.
@@ -373,7 +247,6 @@ pub struct SubschemaValidation {
 
 /// Properties of a [`SchemaObject`] which define validation assertions for numbers.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase", default)]
 pub struct NumberValidation {
     /// The `multipleOf` keyword.
@@ -405,7 +278,6 @@ pub struct NumberValidation {
 
 /// Properties of a [`SchemaObject`] which define validation assertions for strings.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase", default)]
 pub struct StringValidation {
     /// The `maxLength` keyword.
@@ -427,7 +299,6 @@ pub struct StringValidation {
 
 /// Properties of a [`SchemaObject`] which define validation assertions for arrays.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase", default)]
 pub struct ArrayValidation {
     /// The `items` keyword.
@@ -464,7 +335,6 @@ pub struct ArrayValidation {
 
 /// Properties of a [`SchemaObject`] which define validation assertions for objects.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase", default)]
 pub struct ObjectValidation {
     /// The `maxProperties` keyword.
@@ -508,7 +378,6 @@ pub struct ObjectValidation {
 ///
 /// See [JSON Schema 4.2.1. Instance Data Model](https://tools.ietf.org/html/draft-handrews-json-schema-02#section-4.2.1).
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum InstanceType {
     Null,
@@ -524,23 +393,10 @@ pub enum InstanceType {
 ///
 /// In some contexts, a `Single` may be semantically distinct from a `Vec` containing only item.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[cfg_attr(feature = "impl_json_schema", derive(JsonSchema))]
 #[serde(untagged)]
 pub enum SingleOrVec<T> {
     Single(Box<T>),
     Vec(Vec<T>),
-}
-
-impl<T> From<T> for SingleOrVec<T> {
-    fn from(single: T) -> Self {
-        SingleOrVec::Single(Box::new(single))
-    }
-}
-
-impl<T> From<Vec<T>> for SingleOrVec<T> {
-    fn from(vec: Vec<T>) -> Self {
-        SingleOrVec::Vec(vec)
-    }
 }
 
 impl<T: PartialEq> SingleOrVec<T> {
