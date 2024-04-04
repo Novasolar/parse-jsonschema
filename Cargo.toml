@@ -1,7 +1,6 @@
 [package]
 name = "parse-jsonschema"
 version = "0.0.1"
-resolver = "2"
 edition = "2021"
 description = """
 A create for parsing earlier versions of json-schema and fitting it into the structure of schemafy
@@ -18,3 +17,7 @@ serde_json = "1.0.115"
 
 [features]
 preserve_order = ["dep:indexmap", "schemars/preserve_order"]
+
+[[test]]
+name = "indexmap"
+required-features = ["preserve_order"]
