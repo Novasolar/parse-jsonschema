@@ -2,33 +2,11 @@
 JSON Schema types.
 */
 
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::ops::Deref;
-
-/// The map type used by schemars types.
-///
-/// Currently a `BTreeMap` or `IndexMap` can be used, but this may change to a different implementation
-/// with a similar interface in a future version of schemars.
-/// The `IndexMap` will be used when the `preserve_order` feature flag is set.
-#[cfg(not(feature = "preserve_order"))]
-pub type Map<K, V> = std::collections::BTreeMap<K, V>;
-#[cfg(feature = "preserve_order")]
-pub type Map<K, V> = indexmap::IndexMap<K, V>;
-/// The set type used by schemars types.
-///
-/// Currently a `BTreeSet`, but this may change to a different implementation
-/// with a similar interface in a future version of schemars.
-pub type Set<T> = std::collections::BTreeSet<T>;
-
-/// A view into a single entry in a map, which may either be vacant or occupied.
-//
-/// This is constructed from the `entry` method on `BTreeMap` or `IndexMap`,
-/// depending on whether the `preserve_order` feature flag is set.
-#[cfg(not(feature = "preserve_order"))]
-pub type MapEntry<'a, K, V> = std::collections::btree_map::Entry<'a, K, V>;
-#[cfg(feature = "preserve_order")]
-pub type MapEntry<'a, K, V> = indexmap::map::Entry<'a, K, V>;
+use {
+    schemars::{schema::SingleOrVec, Map, Set},
+    serde::{Deserialize, Serialize},
+    serde_json::Value,
+};
 
 /// A JSON Schema.
 #[allow(clippy::large_enum_variant)]
@@ -387,39 +365,4 @@ pub enum InstanceType {
     Number,
     String,
     Integer,
-}
-
-/// A type which can be serialized as a single item, or multiple items.
-///
-/// In some contexts, a `Single` may be semantically distinct from a `Vec` containing only item.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(untagged)]
-pub enum SingleOrVec<T> {
-    Single(Box<T>),
-    Vec(Vec<T>),
-}
-
-impl<T: PartialEq> SingleOrVec<T> {
-    /// Returns `true` if `self` is either a `Single` equal to `x`, or a `Vec` containing `x`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use schemars::schema::SingleOrVec;
-    ///
-    /// let s = SingleOrVec::from(10);
-    /// assert!(s.contains(&10));
-    /// assert!(!s.contains(&20));
-    ///
-    /// let v = SingleOrVec::from(vec![10, 20]);
-    /// assert!(v.contains(&10));
-    /// assert!(v.contains(&20));
-    /// assert!(!v.contains(&30));
-    /// ```
-    pub fn contains(&self, x: &T) -> bool {
-        match self {
-            SingleOrVec::Single(s) => s.deref() == x,
-            SingleOrVec::Vec(v) => v.contains(x),
-        }
-    }
 }
