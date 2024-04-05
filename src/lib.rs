@@ -26,6 +26,16 @@ pub enum Schema {
     Object(SchemaObject),
 }
 
+impl TryInto<schemars::schema::Schema> for Schema {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<schemars::schema::Schema, Self::Error> {
+        Ok(match self {
+            Schema::Bool(b) => schemars::schema::Schema::Bool(b),
+            Schema::Object(o) => schemars::schema::Schema::Object(o.try_into()?),
+        })
+    }
+}
+
 /// The root object of a JSON Schema document.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -110,6 +120,42 @@ pub struct SchemaObject {
     pub extensions: Map<String, Value>,
 }
 
+impl TryInto<schemars::schema::SchemaObject> for SchemaObject {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<schemars::schema::SchemaObject, Self::Error> {
+        if self.required.is_some() {
+            bail!("found illegal \"required\" annotation")
+        }
+        Ok(schemars::schema::SchemaObject {
+            metadata: self.metadata,
+            instance_type: self.instance_type,
+            format: self.format,
+            enum_values: self.enum_values,
+            const_value: self.const_value,
+            subschemas: self
+                .subschemas
+                .map(|s| (*s).try_into())
+                .transpose()
+                .context("in subschemas")?
+                .map(Box::new),
+            number: self.number,
+            string: self.string,
+            array: self
+                .array
+                .map(|a| (*a).try_into())
+                .transpose()?
+                .map(Box::new),
+            object: self
+                .object
+                .map(|a| (*a).try_into())
+                .transpose()?
+                .map(Box::new),
+            reference: self.reference,
+            extensions: self.extensions,
+        })
+    }
+}
+
 // Deserializing "null" to `Option<Value>` directly results in `None`,
 // this function instead makes it deserialize to `Some(Value::Null)`.
 fn allow_null<'de, D>(de: D) -> Result<Option<Value>, D::Error>
@@ -173,6 +219,59 @@ pub struct SubschemaValidation {
     pub else_schema: Option<Box<Schema>>,
 }
 
+impl TryInto<schemars::schema::SubschemaValidation> for SubschemaValidation {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<schemars::schema::SubschemaValidation, Self::Error> {
+        let map_vec_schema = |oms: Option<Vec<Schema>>| -> Result<
+            Option<Vec<schemars::schema::Schema>>,
+            anyhow::Error,
+        > {
+            oms.map(|v| {
+                let (schemas, errs) = v.into_iter().map(|s| s.try_into()).fold(
+                    (Vec::new(), Vec::new()),
+                    |(mut schemas, mut errs), next: Result<_, anyhow::Error>| {
+                        match next {
+                            Ok(s) => schemas.push(s),
+                            Err(e) => errs.push(e),
+                        };
+                        (schemas, errs)
+                        // TODO: Propogate indexes if preserve_order is active, or find some other way of signifying which subschema the problem was in
+                    },
+                );
+                #[allow(clippy::never_loop)]
+                for e in errs {
+                    return Err(e);
+                    // TODO: Return full error tree
+                }
+                Ok(schemas)
+            })
+            .transpose()
+        };
+        Ok(schemars::schema::SubschemaValidation {
+            all_of: map_vec_schema(self.all_of).context("in 'allOf'")?,
+            any_of: map_vec_schema(self.any_of).context("in 'anyOf'")?,
+            one_of: map_vec_schema(self.one_of).context("in 'oneOf'")?,
+            not: self.not.map(|s| (*s).try_into()).transpose()?.map(Box::new),
+            if_schema: self
+                .if_schema
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+            then_schema: self
+                .then_schema
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+            else_schema: self
+                .else_schema
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+        })
+    }
+}
+
 /// Properties of a [`SchemaObject`] which define validation assertions for arrays.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -207,6 +306,57 @@ pub struct ArrayValidation {
     /// See [JSON Schema 9.3.1.4. "contains"](https://tools.ietf.org/html/draft-handrews-json-schema-02#section-9.3.1.4).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub contains: Option<Box<Schema>>,
+}
+
+impl TryInto<schemars::schema::ArrayValidation> for ArrayValidation {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<schemars::schema::ArrayValidation, Self::Error> {
+        fn sov_try_into<T, U>(sov: SingleOrVec<T>) -> Result<SingleOrVec<U>, anyhow::Error>
+        where
+            T: TryInto<U, Error = anyhow::Error>,
+        {
+            match sov {
+                SingleOrVec::Single(bt) => {
+                    (*bt).try_into().map(|u| SingleOrVec::Single(Box::new(u)))
+                }
+                SingleOrVec::Vec(v) => {
+                    let (us, errs) = v.into_iter().map(|t| t.try_into()).fold(
+                        (Vec::new(), Vec::new()),
+                        |(mut us, mut errs), next| {
+                            match next {
+                                Ok(u) => us.push(u),
+                                Err(e) => errs.push(e),
+                            }
+                            (us, errs)
+                        },
+                    );
+                    #[allow(clippy::never_loop)]
+                    for e in errs {
+                        return Err(e);
+                        // TODO: Return all errors
+                    }
+                    Ok(SingleOrVec::Vec(us))
+                }
+            }
+        }
+
+        Ok(schemars::schema::ArrayValidation {
+            items: self.items.map(sov_try_into).transpose()?,
+            additional_items: self
+                .additional_items
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+            max_items: self.max_items,
+            min_items: self.min_items,
+            unique_items: self.unique_items,
+            contains: self
+                .contains
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+        })
+    }
 }
 
 /// Properties of a [`SchemaObject`] which define validation assertions for objects.
@@ -250,153 +400,6 @@ pub struct ObjectValidation {
     pub property_names: Option<Box<Schema>>,
 }
 
-impl TryInto<schemars::schema::ArrayValidation> for ArrayValidation {
-    type Error = anyhow::Error;
-    fn try_into(self) -> Result<schemars::schema::ArrayValidation, Self::Error> {
-        fn sov_try_into<T, U>(sov: SingleOrVec<T>) -> Result<SingleOrVec<U>, anyhow::Error>
-        where
-            T: TryInto<U, Error = anyhow::Error>,
-        {
-            match sov {
-                SingleOrVec::Single(bt) => {
-                    (*bt).try_into().map(|u| SingleOrVec::Single(Box::new(u)))
-                }
-                SingleOrVec::Vec(v) => {
-                    let (us, errs) = v.into_iter().map(|t| t.try_into()).fold(
-                        (Vec::new(), Vec::new()),
-                        |(mut us, mut errs), next| {
-                            match next {
-                                Ok(u) => us.push(u),
-                                Err(e) => errs.push(e),
-                            }
-                            (us, errs)
-                        },
-                    );
-                    for e in errs {
-                        return Err(e);
-                        // TODO: Return all errors
-                    }
-                    Ok(SingleOrVec::Vec(us))
-                }
-            }
-        }
-
-        Ok(schemars::schema::ArrayValidation {
-            items: self.items.map(sov_try_into).transpose()?,
-            additional_items: self
-                .additional_items
-                .map(|s| (*s).try_into())
-                .transpose()?
-                .map(Box::new),
-            max_items: self.max_items,
-            min_items: self.min_items,
-            unique_items: self.unique_items,
-            contains: self
-                .contains
-                .map(|s| (*s).try_into())
-                .transpose()?
-                .map(Box::new),
-        })
-    }
-}
-
-impl TryInto<schemars::schema::SubschemaValidation> for SubschemaValidation {
-    type Error = anyhow::Error;
-
-    fn try_into(self) -> Result<schemars::schema::SubschemaValidation, Self::Error> {
-        let map_vec_schema = |oms: Option<Vec<Schema>>| -> Result<
-            Option<Vec<schemars::schema::Schema>>,
-            anyhow::Error,
-        > {
-            oms.map(|v| {
-                let (schemas, errs) = v.into_iter().map(|s| s.try_into()).fold(
-                    (Vec::new(), Vec::new()),
-                    |(mut schemas, mut errs), next: Result<_, anyhow::Error>| {
-                        match next {
-                            Ok(s) => schemas.push(s),
-                            Err(e) => errs.push(e),
-                        };
-                        (schemas, errs)
-                        // TODO: Propogate indexes if preserve_order is active, or find some other way of signifying which subschema the problem was in
-                    },
-                );
-                for e in errs {
-                    bail!(e)
-                }
-                Ok(schemas)
-            })
-            .transpose()
-        };
-        Ok(schemars::schema::SubschemaValidation {
-            all_of: map_vec_schema(self.all_of).context("in 'allOf'")?,
-            any_of: map_vec_schema(self.any_of).context("in 'anyOf'")?,
-            one_of: map_vec_schema(self.one_of).context("in 'oneOf'")?,
-            not: self.not.map(|s| (*s).try_into()).transpose()?.map(Box::new),
-            if_schema: self
-                .if_schema
-                .map(|s| (*s).try_into())
-                .transpose()?
-                .map(Box::new),
-            then_schema: self
-                .then_schema
-                .map(|s| (*s).try_into())
-                .transpose()?
-                .map(Box::new),
-            else_schema: self
-                .else_schema
-                .map(|s| (*s).try_into())
-                .transpose()?
-                .map(Box::new),
-        })
-    }
-}
-
-impl TryInto<schemars::schema::SchemaObject> for SchemaObject {
-    type Error = anyhow::Error;
-    fn try_into(self) -> Result<schemars::schema::SchemaObject, Self::Error> {
-        if self.required.is_some() {
-            bail!("found illegal \"required\" annotation")
-        }
-        Ok(schemars::schema::SchemaObject {
-            metadata: self.metadata,
-            instance_type: self.instance_type,
-            format: self.format,
-            enum_values: self.enum_values,
-            const_value: self.const_value,
-            subschemas: self
-                .subschemas
-                .map(|s| (*s).try_into())
-                .transpose()
-                .context("in subschemas")?
-                .map(Box::new),
-            number: self.number,
-            string: self.string,
-            array: self
-                .array
-                .map(|a| (*a).try_into())
-                .transpose()?
-                .map(Box::new),
-            object: self
-                .object
-                .map(|a| (*a).try_into())
-                .transpose()?
-                .map(Box::new),
-            reference: self.reference,
-            extensions: self.extensions,
-        })
-    }
-}
-
-impl TryInto<schemars::schema::Schema> for Schema {
-    type Error = anyhow::Error;
-    fn try_into(self) -> Result<schemars::schema::Schema, Self::Error> {
-        Ok(match self {
-            Schema::Bool(b) => schemars::schema::Schema::Bool(b),
-            Schema::Object(o) => schemars::schema::Schema::Object(o.try_into()?),
-        })
-    }
-}
-
 impl TryInto<schemars::schema::ObjectValidation> for ObjectValidation {
     type Error = anyhow::Error;
     fn try_into(self) -> Result<schemars::schema::ObjectValidation, Self::Error> {
@@ -432,6 +435,7 @@ impl TryInto<schemars::schema::ObjectValidation> for ObjectValidation {
             .map(|(k, v)| (k, v.try_into()))
             .fold(Default::default(), process_props);
 
+        #[allow(clippy::never_loop)]
         for (k, e) in errs {
             return Err(e.context(format!("in field '{k}'")));
             // TODO: Return the full error tree in a more reasonable error
@@ -443,6 +447,7 @@ impl TryInto<schemars::schema::ObjectValidation> for ObjectValidation {
             .map(|(k, v)| (k, v.try_into()))
             .fold(Default::default(), process_props);
 
+        #[allow(clippy::never_loop)]
         for (k, e) in errs {
             return Err(e.context(format!("in pattern property '{k}'")));
             // TODO: Return the full error tree in a more reasonable error
