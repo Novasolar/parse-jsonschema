@@ -3,7 +3,11 @@ JSON Schema types.
 */
 
 use {
-    schemars::{schema::SingleOrVec, Map, Set},
+    anyhow::{bail, Context},
+    schemars::{
+        schema::{InstanceType, Metadata, NumberValidation, SingleOrVec, StringValidation},
+        Map, Set,
+    },
     serde::{Deserialize, Serialize},
     serde_json::Value,
 };
@@ -128,60 +132,6 @@ where
     }
 }
 
-/// Properties which annotate a [`SchemaObject`] which typically have no effect when an object is being validated against the schema.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Metadata {
-    /// The `$id` keyword.
-    ///
-    /// See [JSON Schema 8.2.2. The "$id" Keyword](https://tools.ietf.org/html/draft-handrews-json-schema-02#section-8.2.2).
-    #[serde(rename = "$id", skip_serializing_if = "Option::is_none")]
-    pub id: Option<String>,
-    /// The `title` keyword.
-    ///
-    /// See [JSON Schema Validation 9.1. "title" and "description"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-9.1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// The `description` keyword.
-    ///
-    /// See [JSON Schema Validation 9.1. "title" and "description"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-9.1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
-    /// The `default` keyword.
-    ///
-    /// See [JSON Schema Validation 9.2. "default"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-9.2).
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "allow_null"
-    )]
-    pub default: Option<Value>,
-    /// The `deprecated` keyword.
-    ///
-    /// See [JSON Schema Validation 9.3. "deprecated"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-9.3).
-    #[serde(skip_serializing_if = "is_false")]
-    pub deprecated: bool,
-    /// The `readOnly` keyword.
-    ///
-    /// See [JSON Schema Validation 9.4. "readOnly" and "writeOnly"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-9.4).
-    #[serde(skip_serializing_if = "is_false")]
-    pub read_only: bool,
-    /// The `writeOnly` keyword.
-    ///
-    /// See [JSON Schema Validation 9.4. "readOnly" and "writeOnly"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-9.4).
-    #[serde(skip_serializing_if = "is_false")]
-    pub write_only: bool,
-    /// The `examples` keyword.
-    ///
-    /// See [JSON Schema Validation 9.5. "examples"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-9.5).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub examples: Vec<Value>,
-}
-
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn is_false(b: &bool) -> bool {
-    !b
-}
-
 /// Properties of a [`SchemaObject`] which define validation assertions in terms of other schemas.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
@@ -221,58 +171,6 @@ pub struct SubschemaValidation {
     /// See [JSON Schema 9.2.2.3. "else"](https://tools.ietf.org/html/draft-handrews-json-schema-02#section-9.2.2.3).
     #[serde(rename = "else", skip_serializing_if = "Option::is_none")]
     pub else_schema: Option<Box<Schema>>,
-}
-
-/// Properties of a [`SchemaObject`] which define validation assertions for numbers.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct NumberValidation {
-    /// The `multipleOf` keyword.
-    ///
-    /// See [JSON Schema Validation 6.2.1. "multipleOf"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-6.2.1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub multiple_of: Option<f64>,
-    /// The `maximum` keyword.
-    ///
-    /// See [JSON Schema Validation 6.2.2. "maximum"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-6.2.2).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub maximum: Option<f64>,
-    /// The `exclusiveMaximum` keyword.
-    ///
-    /// See [JSON Schema Validation 6.2.3. "exclusiveMaximum"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-6.2.3).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclusive_maximum: Option<f64>,
-    /// The `minimum` keyword.
-    ///
-    /// See [JSON Schema Validation 6.2.4. "minimum"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-6.2.4).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub minimum: Option<f64>,
-    /// The `exclusiveMinimum` keyword.
-    ///
-    /// See [JSON Schema Validation 6.2.5. "exclusiveMinimum"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-6.2.5).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exclusive_minimum: Option<f64>,
-}
-
-/// Properties of a [`SchemaObject`] which define validation assertions for strings.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
-#[serde(rename_all = "camelCase", default)]
-pub struct StringValidation {
-    /// The `maxLength` keyword.
-    ///
-    /// See [JSON Schema Validation 6.3.1. "maxLength"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-6.3.1).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_length: Option<u32>,
-    /// The `minLength` keyword.
-    ///
-    /// See [JSON Schema Validation 6.3.2. "minLength"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-6.3.2).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub min_length: Option<u32>,
-    /// The `pattern` keyword.
-    ///
-    /// See [JSON Schema Validation 6.3.3. "pattern"](https://tools.ietf.org/html/draft-handrews-json-schema-validation-02#section-6.3.3).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pattern: Option<String>,
 }
 
 /// Properties of a [`SchemaObject`] which define validation assertions for arrays.
@@ -352,17 +250,220 @@ pub struct ObjectValidation {
     pub property_names: Option<Box<Schema>>,
 }
 
-/// The possible types of values in JSON Schema documents.
-///
-/// See [JSON Schema 4.2.1. Instance Data Model](https://tools.ietf.org/html/draft-handrews-json-schema-02#section-4.2.1).
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[serde(rename_all = "camelCase")]
-pub enum InstanceType {
-    Null,
-    Boolean,
-    Object,
-    Array,
-    Number,
-    String,
-    Integer,
+impl TryInto<schemars::schema::ArrayValidation> for ArrayValidation {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<schemars::schema::ArrayValidation, Self::Error> {
+        fn sov_try_into<T, U>(sov: SingleOrVec<T>) -> Result<SingleOrVec<U>, anyhow::Error>
+        where
+            T: TryInto<U, Error = anyhow::Error>,
+        {
+            match sov {
+                SingleOrVec::Single(bt) => {
+                    (*bt).try_into().map(|u| SingleOrVec::Single(Box::new(u)))
+                }
+                SingleOrVec::Vec(v) => {
+                    let (us, errs) = v.into_iter().map(|t| t.try_into()).fold(
+                        (Vec::new(), Vec::new()),
+                        |(mut us, mut errs), next| {
+                            match next {
+                                Ok(u) => us.push(u),
+                                Err(e) => errs.push(e),
+                            }
+                            (us, errs)
+                        },
+                    );
+                    for e in errs {
+                        return Err(e);
+                        // TODO: Return all errors
+                    }
+                    Ok(SingleOrVec::Vec(us))
+                }
+            }
+        }
+
+        Ok(schemars::schema::ArrayValidation {
+            items: self.items.map(sov_try_into).transpose()?,
+            additional_items: self
+                .additional_items
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+            max_items: self.max_items,
+            min_items: self.min_items,
+            unique_items: self.unique_items,
+            contains: self
+                .contains
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+        })
+    }
+}
+
+impl TryInto<schemars::schema::SubschemaValidation> for SubschemaValidation {
+    type Error = anyhow::Error;
+
+    fn try_into(self) -> Result<schemars::schema::SubschemaValidation, Self::Error> {
+        let map_vec_schema = |oms: Option<Vec<Schema>>| -> Result<
+            Option<Vec<schemars::schema::Schema>>,
+            anyhow::Error,
+        > {
+            oms.map(|v| {
+                let (schemas, errs) = v.into_iter().map(|s| s.try_into()).fold(
+                    (Vec::new(), Vec::new()),
+                    |(mut schemas, mut errs), next: Result<_, anyhow::Error>| {
+                        match next {
+                            Ok(s) => schemas.push(s),
+                            Err(e) => errs.push(e),
+                        };
+                        (schemas, errs)
+                        // TODO: Propogate indexes if preserve_order is active, or find some other way of signifying which subschema the problem was in
+                    },
+                );
+                for e in errs {
+                    bail!(e)
+                }
+                Ok(schemas)
+            })
+            .transpose()
+        };
+        Ok(schemars::schema::SubschemaValidation {
+            all_of: map_vec_schema(self.all_of).context("in 'allOf'")?,
+            any_of: map_vec_schema(self.any_of).context("in 'anyOf'")?,
+            one_of: map_vec_schema(self.one_of).context("in 'oneOf'")?,
+            not: self.not.map(|s| (*s).try_into()).transpose()?.map(Box::new),
+            if_schema: self
+                .if_schema
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+            then_schema: self
+                .then_schema
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+            else_schema: self
+                .else_schema
+                .map(|s| (*s).try_into())
+                .transpose()?
+                .map(Box::new),
+        })
+    }
+}
+
+impl TryInto<schemars::schema::SchemaObject> for SchemaObject {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<schemars::schema::SchemaObject, Self::Error> {
+        if self.required.is_some() {
+            bail!("found illegal \"required\" annotation")
+        }
+        Ok(schemars::schema::SchemaObject {
+            metadata: self.metadata,
+            instance_type: self.instance_type,
+            format: self.format,
+            enum_values: self.enum_values,
+            const_value: self.const_value,
+            subschemas: self
+                .subschemas
+                .map(|s| (*s).try_into())
+                .transpose()
+                .context("in subschemas")?
+                .map(Box::new),
+            number: self.number,
+            string: self.string,
+            array: self
+                .array
+                .map(|a| (*a).try_into())
+                .transpose()?
+                .map(Box::new),
+            object: self
+                .object
+                .map(|a| (*a).try_into())
+                .transpose()?
+                .map(Box::new),
+            reference: self.reference,
+            extensions: self.extensions,
+        })
+    }
+}
+
+impl TryInto<schemars::schema::Schema> for Schema {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<schemars::schema::Schema, Self::Error> {
+        Ok(match self {
+            Schema::Bool(b) => schemars::schema::Schema::Bool(b),
+            Schema::Object(o) => schemars::schema::Schema::Object(o.try_into()?),
+        })
+    }
+}
+
+impl TryInto<schemars::schema::ObjectValidation> for ObjectValidation {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<schemars::schema::ObjectValidation, Self::Error> {
+        let process_props =
+            |(mut props, mut errs): (Map<_, _>, Vec<_>),
+             (k, v): (String, Result<_, anyhow::Error>)| match v {
+                Ok(v) => {
+                    props.insert(k, v);
+                    (props, errs)
+                }
+                Err(e) => {
+                    errs.push((k, e));
+                    (props, errs)
+                }
+            };
+
+        let mut required = self.required;
+
+        let (properties, errs) = self
+            .properties
+            .into_iter()
+            .map(|(k, v)| {
+                let mut o = match v {
+                    Schema::Bool(b) => return (k, Schema::Bool(b)),
+                    Schema::Object(o) => o,
+                };
+                let req = o.required.take();
+                if let Some(true) = req {
+                    required.insert(k.clone());
+                };
+                (k, Schema::Object(o))
+            })
+            .map(|(k, v)| (k, v.try_into()))
+            .fold(Default::default(), process_props);
+
+        for (k, e) in errs {
+            return Err(e.context(format!("in field '{k}'")));
+            // TODO: Return the full error tree in a more reasonable error
+        }
+
+        let (pattern_properties, errs) = self
+            .pattern_properties
+            .into_iter()
+            .map(|(k, v)| (k, v.try_into()))
+            .fold(Default::default(), process_props);
+
+        for (k, e) in errs {
+            return Err(e.context(format!("in pattern property '{k}'")));
+            // TODO: Return the full error tree in a more reasonable error
+        }
+
+        Ok(schemars::schema::ObjectValidation {
+            max_properties: self.max_properties,
+            min_properties: self.min_properties,
+            required,
+            properties,
+            pattern_properties,
+            additional_properties: self
+                .additional_properties
+                .map(|b| (*b).try_into())
+                .transpose()?
+                .map(Box::new),
+            property_names: self
+                .property_names
+                .map(|b| (*b).try_into())
+                .transpose()?
+                .map(Box::new),
+        })
+    }
 }
