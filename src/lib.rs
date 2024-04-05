@@ -59,6 +59,44 @@ pub struct RootSchema {
     pub definitions: Map<String, Schema>,
 }
 
+impl TryInto<schemars::schema::RootSchema> for RootSchema {
+    type Error = anyhow::Error;
+    fn try_into(self) -> Result<schemars::schema::RootSchema, Self::Error> {
+        let definitions = {
+            let (defs, errs) = self
+                .definitions
+                .into_iter()
+                .map(|(k, v)| (k, v.try_into()))
+                .fold(
+                    Default::default(),
+                    |(mut defs, mut errs): (Map<_, _>, Vec<_>),
+                     (k, r): (String, Result<_, anyhow::Error>)| {
+                        match r {
+                            Ok(v) => {
+                                defs.insert(k, v);
+                            }
+                            Err(e) => {
+                                errs.push((k, e));
+                            }
+                        };
+                        (defs, errs)
+                    },
+                );
+
+            #[allow(clippy::never_loop)]
+            for (k, e) in errs {
+                return Err(e.context(format!("in property {k}")));
+            }
+            defs
+        };
+        Ok(schemars::schema::RootSchema {
+            meta_schema: self.meta_schema,
+            schema: self.schema.try_into()?,
+            definitions,
+        })
+    }
+}
+
 /// A JSON Schema object.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 #[serde(rename_all = "camelCase", default)]
